@@ -1090,6 +1090,11 @@ gb_internal lbValue lb_emit_vector_mul_matrix(lbProcedure *p, lbValue lhs, lbVal
 gb_internal lbValue lb_emit_arith_matrix(lbProcedure *p, TokenKind op, lbValue lhs, lbValue rhs, Type *type, bool component_wise) {
 	GB_ASSERT(is_type_matrix(lhs.type) || is_type_matrix(rhs.type));
 
+	if ((is_type_array_like(lhs.type) && is_type_matrix(base_array_type(lhs.type))) ||
+	    (is_type_array_like(rhs.type) && is_type_matrix(base_array_type(rhs.type)))) {
+		return lb_emit_arith_array(p, op, lhs, rhs, type);
+	}
+
 	if (op == Token_Mul && !component_wise) {
 		Type *xt = base_type(lhs.type);
 		Type *yt = base_type(rhs.type);
