@@ -1311,6 +1311,19 @@ gb_internal void lb_copy_bits(lbProcedure *p,
 	}
 }
 
+// A bit_field lays its fields out from the low bit of its backing upwards, so when the backing is a single integer
+// and neither it nor the field needs byte swapping, a field is read and written as part of that integer.
+// Returns that backing integer type, or nullptr if the field needs the general path.
+gb_internal Type *lb_bit_field_integer_backing(lbAddr const &addr) {
+	Type *backing_type = core_type(type_deref(addr.addr.type));
+	if (is_type_integer(backing_type) &&
+	    !is_type_different_to_arch_endianness(backing_type) &&
+	    !is_type_different_to_arch_endianness(addr.bitfield.type)) {
+		return backing_type;
+	}
+	return nullptr;
+}
+
 gb_internal void lb_addr_store(lbProcedure *p, lbAddr addr, lbValue value) {
 	if (addr.addr.value == nullptr) {
 		return;
@@ -1327,6 +1340,25 @@ gb_internal void lb_addr_store(lbProcedure *p, lbAddr addr, lbValue value) {
 	}
 
 	if (addr.kind == lbAddr_BitField) {
+		Type *backing_type = lb_bit_field_integer_backing(addr);
+		if (backing_type != nullptr) {
+			// backing = (backing &~ (mask << bit_offset)) | ((value & mask) << bit_offset)
+			LLVMTypeRef lit = lb_type(p->module, backing_type);
+			LLVMValueRef mask  = lb_const_low_bits_mask(lit, addr.bitfield.bit_size);
+			LLVMValueRef shift = LLVMConstInt(lit, addr.bitfield.bit_offset, false);
+
+			LLVMValueRef v = LLVMBuildIntCast2(p->builder, value.value, lit, false, "");
+			v = LLVMBuildAnd(p->builder, v, mask, "");
+			v = LLVMBuildShl(p->builder, v, shift, "");
+
+			LLVMValueRef backing = OdinLLVMBuildLoad(p, lit, addr.addr.value);
+			LLVMValueRef rest = LLVMBuildAnd(p->builder, backing, LLVMBuildNot(p->builder, LLVMBuildShl(p->builder, mask, shift, ""), ""), "");
+			v = LLVMBuildOr(p->builder, rest, v, "");
+
+			OdinLLVMBuildStore(p, v, addr.addr.value);
+			return;
+		}
+
 		lbValue dst = addr.addr;
 		lbValue src = {};
 		if (is_type_endian_big(addr.bitfield.type)) {
@@ -1640,6 +1672,20 @@ gb_internal lbValue lb_addr_load(lbProcedure *p, lbAddr const &addr) {
 	GB_ASSERT(addr.addr.value != nullptr);
 
 	if (addr.kind == lbAddr_BitField) {
+		Type *backing_type = lb_bit_field_integer_backing(addr);
+		if (backing_type != nullptr) {
+			// shift the field down to the low bits, and extend it from its own width to its type's
+			Type *t = addr.bitfield.type;
+			Type *ct = core_type(t);
+			bool is_signed = !is_type_unsigned(ct) && !is_type_boolean(ct);
+
+			LLVMValueRef v = OdinLLVMBuildLoad(p, lb_type(p->module, backing_type), addr.addr.value);
+			v = LLVMBuildLShr(p->builder, v, LLVMConstInt(LLVMTypeOf(v), addr.bitfield.bit_offset, false), "");
+			v = LLVMBuildTrunc(p->builder, v, LLVMIntTypeInContext(p->module->ctx, cast(unsigned)addr.bitfield.bit_size), "");
+			v = LLVMBuildIntCast2(p->builder, v, lb_type(p->module, t), is_signed, "");
+			return lbValue{v, t};
+		}
+
 		Type *ct = core_type(addr.bitfield.type);
 		bool do_mask = false;
 		if (is_type_unsigned(ct) || is_type_boolean(ct)) {

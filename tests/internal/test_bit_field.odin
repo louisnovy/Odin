@@ -95,6 +95,18 @@ bit_field_signed_fields_sign_extend :: proc(t: ^testing.T) {
 	testing.expect_value(t, w.s, 2047)
 }
 
+// and to the full width of its type, even when that is wider than the backing
+@(test)
+bit_field_signed_field_wider_than_backing :: proc(t: ^testing.T) {
+	S :: bit_field u16 { lo: u8 | 5, s: i32 | 3, hi: u8 | 8 }
+
+	expected := [8]i32{0, 1, 2, 3, -4, -3, -2, -1}
+	for v in u16(0) ..< 8 {
+		x := transmute(S)(0xAA00 | v << 5 | 0b10101)
+		testing.expect_value(t, x.s, expected[v])
+	}
+}
+
 // A 1-bit boolean field is well formed at every backing value: the mask leaves only bit 0, so the
 // read is 0 or 1 whichever way it is tested. Wider boolean fields are legal -- any non-zero value
 // is true -- and are not covered here
