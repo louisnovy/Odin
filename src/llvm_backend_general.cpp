@@ -1058,15 +1058,16 @@ gb_internal void lb_emit_slice_bounds_check(lbProcedure *p, Token token, lbValue
 	}
 }
 
+// NOTE: LoadInst is deliberately not handled: its alignment is that of where the pointer was loaded from, not of the pointee
 gb_internal unsigned lb_try_get_alignment(LLVMValueRef addr_ptr, unsigned default_alignment) {
-	if (LLVMIsAGlobalValue(addr_ptr) || LLVMIsAAllocaInst(addr_ptr) || LLVMIsALoadInst(addr_ptr)) {
+	if (LLVMIsAGlobalValue(addr_ptr) || LLVMIsAAllocaInst(addr_ptr)) {
 		return LLVMGetAlignment(addr_ptr);
 	}
 	return default_alignment;
 }
 
 gb_internal bool lb_try_update_alignment(LLVMValueRef addr_ptr, unsigned alignment) {
-	if (LLVMIsAGlobalValue(addr_ptr) || LLVMIsAAllocaInst(addr_ptr) || LLVMIsALoadInst(addr_ptr)) {
+	if (LLVMIsAGlobalValue(addr_ptr) || LLVMIsAAllocaInst(addr_ptr)) {
 		if (LLVMGetAlignment(addr_ptr) < alignment) {
 			if (LLVMIsAAllocaInst(addr_ptr)) {
 				LLVMSetAlignment(addr_ptr, alignment);
@@ -1098,21 +1099,12 @@ gb_internal bool lb_try_vector_cast(lbModule *m, lbValue ptr, LLVMTypeRef *vecto
 	if (lb_can_try_to_inline_array_arith(array_type) &&
 	    is_type_valid_vector_elem(elem_type)) {
 		// Try to treat it like a vector if possible
-		bool possible = false;
 		LLVMTypeRef vector_type = LLVMVectorType(lb_type(m, elem_type), cast(unsigned)count);
 		unsigned vector_alignment = cast(unsigned)lb_alignof(vector_type);
 
-		LLVMValueRef addr_ptr = ptr.value;
-		if (LLVMIsAAllocaInst(addr_ptr) || LLVMIsAGlobalValue(addr_ptr)) {
-			possible = lb_try_update_alignment(addr_ptr, vector_alignment);
-		} else if (LLVMIsALoadInst(addr_ptr)) {
-			unsigned alignment = LLVMGetAlignment(addr_ptr);
-			possible = alignment >= vector_alignment;
-		}
-
 		// NOTE: Due to alignment requirements, if the pointer is not correctly aligned
 		// then it cannot be treated as a vector
-		if (possible) {
+		if (lb_try_update_alignment(ptr, vector_alignment)) {
 			if (vector_type_) *vector_type_ =vector_type;
 			return true;
 		}
