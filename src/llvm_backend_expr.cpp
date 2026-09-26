@@ -3048,22 +3048,22 @@ gb_internal lbValue lb_emit_conv(lbProcedure *p, lbValue value, Type *t) {
 							else                    { op = LLVMFPExt;   }
 						} else {
 							GB_ASSERT(is_type_integer_like(de) || is_type_rune(de));
-							if (is_type_unsigned(de) || is_type_boolean(de)) { op = LLVMFPToUI; }
-							else                                             { op = LLVMFPToSI; }
+							if (is_type_unsigned(de)) { op = LLVMFPToUI; }
+							else                      { op = LLVMFPToSI; }
 						}
 					} else {
 						GB_ASSERT(is_type_integer_like(se) || is_type_rune(se));
 
 						if (is_type_float(de)) {
-							if (is_type_unsigned(se) || is_type_boolean(se)) { op = LLVMUIToFP; }
-							else                                             { op = LLVMSIToFP; }
+							if (is_type_unsigned(se)) { op = LLVMUIToFP; }
+							else                      { op = LLVMSIToFP; }
 						} else {
 							if (de_sz == se_sz) {
 								op = LLVMBitCast;
 							} else if (de_sz < se_sz) {
 								op = LLVMTrunc;
 							} else {
-								op = (is_type_unsigned(se) || is_type_boolean(se)) ? LLVMZExt : LLVMSExt; // zero extent
+								op = is_type_unsigned(se) ? LLVMZExt : LLVMSExt;
 							}
 						}
 					}
@@ -3079,7 +3079,14 @@ gb_internal lbValue lb_emit_conv(lbProcedure *p, lbValue value, Type *t) {
 					LLVMValueRef src_vector = LLVMBuildLoad2(p->builder, src_vector_type, src_ptr, "");
 					LLVMSetAlignment(src_vector, cast(unsigned)type_align_of(se));
 
-					LLVMValueRef dst_vector = LLVMBuildCast(p->builder, op, src_vector, dst_vector_type, "");
+					LLVMValueRef dst_vector = nullptr;
+					if (is_type_boolean(se) || is_type_boolean(de)) {
+						// NOTE: as in the scalar conversion, a boolean converts by testing `x != 0`, not by truncating or extending it
+						LLVMValueRef ne = LLVMBuildICmp(p->builder, LLVMIntNE, src_vector, LLVMConstNull(src_vector_type), "");
+						dst_vector = LLVMBuildZExt(p->builder, ne, dst_vector_type, "");
+					} else {
+						dst_vector = LLVMBuildCast(p->builder, op, src_vector, dst_vector_type, "");
+					}
 
 					LLVMValueRef store = LLVMBuildStore(p->builder, dst_vector, dst_ptr);
 					LLVMSetAlignment(store, cast(unsigned)type_align_of(de));
